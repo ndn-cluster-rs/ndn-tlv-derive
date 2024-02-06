@@ -1,5 +1,5 @@
 use quote::quote;
-use syn::{Data, Fields};
+use syn::{Data, Field, Fields};
 
 #[derive(deluxe::ParseMetaItem)]
 struct TlvAttrKW {
@@ -9,47 +9,20 @@ struct TlvAttrKW {
 
 #[derive(deluxe::ExtractAttributes)]
 #[deluxe(attributes(tlv))]
-struct TlvAttr(usize, #[deluxe(flatten)] TlvAttrKW);
+struct TlvAttr(#[deluxe(default)] usize, #[deluxe(flatten)] TlvAttrKW);
 
-#[proc_macro_derive(Tlv, attributes(tlv))]
-pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let mut input = syn::parse2::<syn::DeriveInput>(input.into()).unwrap();
+fn derive_struct(
+    fields: Vec<Field>,
+    crate_name: proc_macro2::TokenStream,
+    named: bool,
+    derivee: proc_macro2::Ident,
+    typ: usize,
+) -> proc_macro::TokenStream {
+    if typ == 0 {
+        panic!("Type must be defined when deriving Tlv for structs");
+    }
 
-    let TlvAttr(typ, kw) = deluxe::extract_attributes(&mut input).unwrap();
-
-    let derivee = input.ident;
-    let crate_name = if kw.internal {
-        quote! {crate}
-    } else {
-        quote! {::ndn_tlv}
-    };
-
-    let mut field_names = Vec::new();
-    let named;
-
-    let fields = {
-        let mut ret = Vec::new();
-        match input.data {
-            Data::Union(_) => panic!("Deriving Tlv on Unions is not supported"),
-            Data::Struct(struct_data) => match struct_data.fields {
-                Fields::Unit => named = true,
-                Fields::Unnamed(fields) => {
-                    field_names = Vec::with_capacity(fields.unnamed.len());
-                    ret = Vec::with_capacity(fields.unnamed.len());
-                    ret.extend(fields.unnamed);
-                    named = false;
-                }
-                Fields::Named(fields) => {
-                    field_names = Vec::with_capacity(fields.named.len());
-                    ret = Vec::with_capacity(fields.named.len());
-                    ret.extend(fields.named);
-                    named = true;
-                }
-            },
-            Data::Enum(_) => unimplemented!(),
-        }
-        ret
-    };
+    let mut field_names = Vec::with_capacity(fields.len());
 
     let impls = {
         let mut initialisers = Vec::with_capacity(fields.len());
@@ -125,4 +98,88 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         #impls
     }
     .into()
+}
+
+#[proc_macro_derive(Tlv, attributes(tlv))]
+pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let mut input = syn::parse2::<syn::DeriveInput>(input.into()).unwrap();
+
+    let TlvAttr(typ, kw) = deluxe::extract_attributes(&mut input).unwrap();
+
+    let derivee = input.ident;
+    let crate_name = if kw.internal {
+        quote! {crate}
+    } else {
+        quote! {::ndn_tlv}
+    };
+
+    match input.data {
+        Data::Union(_) => panic!("Deriving Tlv on Unions is not supported"),
+        Data::Struct(struct_data) => match struct_data.fields {
+            Fields::Unit => derive_struct(Vec::new(), crate_name, true, derivee, typ),
+            Fields::Unnamed(unnamed_fields) => {
+                let mut fields = Vec::with_capacity(unnamed_fields.unnamed.len());
+                fields.extend(unnamed_fields.unnamed);
+                derive_struct(fields, crate_name, false, derivee, typ)
+            }
+            Fields::Named(named_fields) => {
+                let mut fields = Vec::with_capacity(named_fields.named.len());
+                fields.extend(named_fields.named);
+                derive_struct(fields, crate_name, true, derivee, typ)
+            }
+        },
+        Data::Enum(enm) => {
+            let mut variants = Vec::with_capacity(enm.variants.len());
+            let mut fields = Vec::with_capacity(enm.variants.len());
+
+            for variant in enm.variants {
+                variants.push(variant.ident);
+
+                if variant.fields.len() != 1 || !matches!(variant.fields, syn::Fields::Unnamed(_)) {
+                    panic!("Enum variants must have exactly 1 unnamed field");
+                }
+                fields.push(variant.fields.iter().next().unwrap().ty.clone());
+            }
+
+            quote! {
+                impl #crate_name::TlvDecode for #derivee {
+                    fn decode(bytes: &mut #crate_name::bytes::Bytes) -> #crate_name::Result<Self> {
+                        let mut cur = bytes.clone();
+
+                        let typ = #crate_name::VarNum::decode(&mut cur)?;
+                        match typ.value() {
+                            #(
+                            #fields::TYP => Ok(Self::#variants(
+                                #variants::decode(bytes)?,
+                            )),
+                            )*
+                            _ => Err(ndn_tlv::TlvError::TypeMismatch {
+                                expected: 0, // TODO
+                                found: typ.value(),
+                            }),
+                        }
+                    }
+                }
+
+                impl #crate_name::TlvEncode for #derivee {
+                    fn encode(&self) -> #crate_name::bytes::Bytes {
+                        match self {
+                            #(
+                            Self::#variants(x) => x.encode(),
+                            )*
+                        }
+                    }
+
+                    fn size(&self) -> usize {
+                        match self {
+                            #(
+                                Self::#variants(x) => x.size(),
+                            )*
+                        }
+                    }
+                }
+            }
+            .into()
+        }
+    }
 }

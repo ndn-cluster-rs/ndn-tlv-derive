@@ -153,7 +153,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                 #variants::decode(bytes)?,
                             )),
                             )*
-                            _ => Err(ndn_tlv::TlvError::TypeMismatch {
+                            _ => Err(#crate_name::TlvError::TypeMismatch {
                                 expected: 0, // TODO
                                 found: typ.value(),
                             }),

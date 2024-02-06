@@ -25,18 +25,25 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     };
 
     let mut field_names = Vec::new();
+    let named;
 
     let fields = {
         let mut ret = Vec::new();
         match input.data {
             Data::Union(_) => panic!("Deriving Tlv on Unions is not supported"),
             Data::Struct(struct_data) => match struct_data.fields {
-                Fields::Unit => {}
-                Fields::Unnamed(_) => panic!("Cannot derive Tlv on struct with unnamed fields"),
+                Fields::Unit => named = true,
+                Fields::Unnamed(fields) => {
+                    field_names = Vec::with_capacity(fields.unnamed.len());
+                    ret = Vec::with_capacity(fields.unnamed.len());
+                    ret.extend(fields.unnamed);
+                    named = false;
+                }
                 Fields::Named(fields) => {
                     field_names = Vec::with_capacity(fields.named.len());
                     ret = Vec::with_capacity(fields.named.len());
                     ret.extend(fields.named);
+                    named = true;
                 }
             },
             Data::Enum(_) => unimplemented!(),
@@ -46,14 +53,29 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     let impls = {
         let mut initialisers = Vec::with_capacity(fields.len());
-        for field in fields {
+        for (i, field) in fields.iter().enumerate() {
             let ty = &field.ty;
-            let ident = field.ident.as_ref().unwrap();
-            initialisers.push(quote! {
-                #ident: <#ty as #crate_name::TlvDecode>::decode(&mut inner_data)?
-            });
-            field_names.push(ident.to_owned());
+            if let Some(ref ident) = field.ident {
+                initialisers.push(quote! {
+                    #ident: <#ty as #crate_name::TlvDecode>::decode(&mut inner_data)?
+                });
+                field_names.push(quote!(#ident));
+            } else {
+                initialisers.push(quote! {
+                    <#ty as #crate_name::TlvDecode>::decode(&mut inner_data)?
+                });
+                let idx = syn::Index::from(i);
+                field_names.push(quote!(#idx));
+            }
         }
+
+        let initialiser = if named {
+            quote! {Ok(Self { #(#initialisers,)* })}
+        } else {
+            quote! {
+                Ok(Self (#(#initialisers,)*))
+            }
+        };
 
         quote! {
             impl #crate_name::TlvDecode for #derivee {
@@ -64,7 +86,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     let length = #crate_name::VarNum::decode(bytes)?;
                     let mut inner_data = bytes.copy_to_bytes(length.value());
 
-                    Ok(Self { #(#initialisers,)* })
+                    #initialiser
                 }
             }
 

@@ -1,17 +1,28 @@
 use quote::quote;
 use syn::{Data, Fields};
 
+#[derive(deluxe::ParseMetaItem)]
+struct TlvAttrKW {
+    #[deluxe(default)]
+    internal: bool,
+}
+
 #[derive(deluxe::ExtractAttributes)]
 #[deluxe(attributes(tlv))]
-struct TlvAttr(usize);
+struct TlvAttr(usize, #[deluxe(flatten)] TlvAttrKW);
 
 #[proc_macro_derive(Tlv, attributes(tlv))]
 pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let mut input = syn::parse2::<syn::DeriveInput>(input.into()).unwrap();
 
-    let TlvAttr(typ) = deluxe::extract_attributes(&mut input).unwrap();
+    let TlvAttr(typ, kw) = deluxe::extract_attributes(&mut input).unwrap();
 
     let derivee = input.ident;
+    let crate_name = if kw.internal {
+        quote! {crate}
+    } else {
+        quote! {::ndn_tlv}
+    };
 
     let mut field_names = Vec::new();
 
@@ -39,36 +50,36 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             let ty = &field.ty;
             let ident = field.ident.as_ref().unwrap();
             initialisers.push(quote! {
-                #ident: <#ty as ::ndn_tlv::TlvDecode>::decode(&mut inner_data)?
+                #ident: <#ty as #crate_name::TlvDecode>::decode(&mut inner_data)?
             });
             field_names.push(ident.to_owned());
         }
 
         quote! {
-            impl ::ndn_tlv::TlvDecode for #derivee {
-                fn decode(bytes: &mut ::ndn_tlv::bytes::Bytes) -> ::ndn_tlv::Result<Self> {
-                    use ::ndn_tlv::bytes::Buf;
-                    let typ = ::ndn_tlv::VarNum::decode(bytes)?;
+            impl #crate_name::TlvDecode for #derivee {
+                fn decode(bytes: &mut #crate_name::bytes::Bytes) -> #crate_name::Result<Self> {
+                    use #crate_name::bytes::Buf;
+                    let typ = #crate_name::VarNum::decode(bytes)?;
                     if typ.value() != Self::TYP {
-                        return Err(::ndn_tlv::TlvError::TypeMismatch {
+                        return Err(#crate_name::TlvError::TypeMismatch {
                             expected: Self::TYP,
                             found: typ.value(),
                         });
                     }
-                    let length = ::ndn_tlv::VarNum::decode(bytes)?;
+                    let length = #crate_name::VarNum::decode(bytes)?;
                     let mut inner_data = bytes.copy_to_bytes(length.value());
 
                     Ok(Self { #(#initialisers,)* })
                 }
             }
 
-            impl ::ndn_tlv::TlvEncode for #derivee {
-                fn encode(&self) -> ::ndn_tlv::bytes::Bytes {
-                    use ::ndn_tlv::bytes::BufMut;
-                    let mut bytes = ::ndn_tlv::bytes::BytesMut::with_capacity(self.size());
+            impl #crate_name::TlvEncode for #derivee {
+                fn encode(&self) -> #crate_name::bytes::Bytes {
+                    use #crate_name::bytes::BufMut;
+                    let mut bytes = #crate_name::bytes::BytesMut::with_capacity(self.size());
 
-                    bytes.put(::ndn_tlv::VarNum::new(Self::TYP).encode());
-                    bytes.put(::ndn_tlv::VarNum::new(self.inner_size()).encode());
+                    bytes.put(#crate_name::VarNum::new(Self::TYP).encode());
+                    bytes.put(#crate_name::VarNum::new(self.inner_size()).encode());
                     #(
                         bytes.put(self.#field_names.encode());
                         )*
@@ -77,8 +88,8 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 }
 
                 fn size(&self) -> usize {
-                    ::ndn_tlv::VarNum::new(Self::TYP).size()
-                        + ::ndn_tlv::VarNum::new(self.inner_size()).size()
+                    #crate_name::VarNum::new(Self::TYP).size()
+                        + #crate_name::VarNum::new(self.inner_size()).size()
                         #(+ self.#field_names.size())*
                 }
             }
@@ -86,7 +97,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     };
 
     quote! {
-        impl ::ndn_tlv::Tlv for #derivee {
+        impl #crate_name::Tlv for #derivee {
             const TYP: usize = #typ;
 
             fn inner_size(&self) -> usize {

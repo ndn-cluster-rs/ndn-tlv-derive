@@ -1,4 +1,3 @@
-use proc_macro2::Ident;
 use quote::quote;
 use syn::{Data, Fields};
 
@@ -14,85 +13,85 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     let derivee = input.ident;
 
-    let impls = match input.data {
-        Data::Union(_) => panic!("Deriving Tlv on Unions is not supported"),
-        Data::Struct(struct_data) => match struct_data.fields {
-            Fields::Unit => panic!("Cannot derive Tlv on Unit struct"),
-            Fields::Unnamed(_) => panic!("Cannot derive Tlv on struct with unnamed fields"),
-            Fields::Named(fields) => {
-                let mut decodes = Vec::with_capacity(fields.named.len() - 2);
-                let mut initialisers = Vec::with_capacity(fields.named.len() - 2);
-                let mut field_names = Vec::with_capacity(fields.named.len() - 2);
-                let mut iter = fields.named.iter();
+    let mut field_names = Vec::new();
 
-                if fields.named.len() < 2 {
-                    panic!("A TLV record must have at least two fields: type and length");
+    let fields = {
+        let mut ret = Vec::new();
+        match input.data {
+            Data::Union(_) => panic!("Deriving Tlv on Unions is not supported"),
+            Data::Struct(struct_data) => match struct_data.fields {
+                Fields::Unit => {}
+                Fields::Unnamed(_) => panic!("Cannot derive Tlv on struct with unnamed fields"),
+                Fields::Named(fields) => {
+                    field_names = Vec::with_capacity(fields.named.len());
+                    ret = Vec::with_capacity(fields.named.len());
+                    ret.extend(fields.named);
                 }
+            },
+            Data::Enum(_) => unimplemented!(),
+        }
+        ret
+    };
 
-                let typ_name = iter.next().unwrap().ident.as_ref().unwrap();
-                let length_name = iter.next().unwrap().ident.as_ref().unwrap();
+    let impls = {
+        let mut initialisers = Vec::with_capacity(fields.len());
+        for field in fields {
+            let ty = &field.ty;
+            let ident = field.ident.as_ref().unwrap();
+            initialisers.push(quote! {
+                #ident: <#ty as ::ndn_tlv::TlvDecode>::decode(&mut inner_data)?
+            });
+            field_names.push(ident.to_owned());
+        }
 
-                for field in iter {
-                    let ty = &field.ty;
-                    let ident = field.ident.as_ref().unwrap();
-                    let name = Ident::new(&format!("field_{}", ident), ident.span());
-                    decodes.push(quote! {
-                        let #name = <#ty as ::ndn_tlv::TlvDecode>::decode(&mut inner_data)?;
-                    });
-                    initialisers.push(quote! {
-                        #ident: #name
-                    });
-                    field_names.push(ident);
-                }
-
-                quote! {
-                    impl ::ndn_tlv::TlvDecode for #derivee {
-                        fn decode(bytes: &mut ::ndn_tlv::bytes::Bytes) -> ::ndn_tlv::Result<Self> {
-                            use ::ndn_tlv::bytes::Buf;
-                            let typ = ::ndn_tlv::VarNum::decode(bytes)?;
-                            if typ.value() != Self::TYP {
-                                return Err(::ndn_tlv::TlvError::TypeMismatch {
-                                    expected: Self::TYP,
-                                    found: typ.value(),
-                                });
-                            }
-                            let length = ::ndn_tlv::VarNum::decode(bytes)?;
-                            let mut inner_data = bytes.copy_to_bytes(length.value());
-                            #(#decodes)*
-
-                            Ok(Self { #typ_name: typ, #length_name: length, #(#initialisers,)* })
-                        }
+        quote! {
+            impl ::ndn_tlv::TlvDecode for #derivee {
+                fn decode(bytes: &mut ::ndn_tlv::bytes::Bytes) -> ::ndn_tlv::Result<Self> {
+                    use ::ndn_tlv::bytes::Buf;
+                    let typ = ::ndn_tlv::VarNum::decode(bytes)?;
+                    if typ.value() != Self::TYP {
+                        return Err(::ndn_tlv::TlvError::TypeMismatch {
+                            expected: Self::TYP,
+                            found: typ.value(),
+                        });
                     }
+                    let length = ::ndn_tlv::VarNum::decode(bytes)?;
+                    let mut inner_data = bytes.copy_to_bytes(length.value());
 
-                    impl ::ndn_tlv::TlvEncode for #derivee {
-                        fn encode(&self) -> ::ndn_tlv::bytes::Bytes {
-                            use ::ndn_tlv::bytes::BufMut;
-                            let mut bytes = ::ndn_tlv::bytes::BytesMut::with_capacity(self.size());
-
-                            bytes.put(self.#typ_name.encode());
-                            bytes.put(self.#length_name.encode());
-                            #(
-                                bytes.put(self.#field_names.encode());
-                                )*
-
-                            bytes.freeze()
-                        }
-
-                        fn size(&self) -> usize {
-                            self.typ.size()
-                                + self.length.size()
-                                #(+ self.#field_names.size())*
-                        }
-                    }
+                    Ok(Self { #(#initialisers,)* })
                 }
             }
-        },
-        Data::Enum(_) => unimplemented!(),
+
+            impl ::ndn_tlv::TlvEncode for #derivee {
+                fn encode(&self) -> ::ndn_tlv::bytes::Bytes {
+                    use ::ndn_tlv::bytes::BufMut;
+                    let mut bytes = ::ndn_tlv::bytes::BytesMut::with_capacity(self.size());
+
+                    bytes.put(::ndn_tlv::VarNum::new(Self::TYP).encode());
+                    bytes.put(::ndn_tlv::VarNum::new(self.inner_size()).encode());
+                    #(
+                        bytes.put(self.#field_names.encode());
+                        )*
+
+                    bytes.freeze()
+                }
+
+                fn size(&self) -> usize {
+                    ::ndn_tlv::VarNum::new(Self::TYP).size()
+                        + ::ndn_tlv::VarNum::new(self.inner_size()).size()
+                        #(+ self.#field_names.size())*
+                }
+            }
+        }
     };
 
     quote! {
         impl ::ndn_tlv::Tlv for #derivee {
             const TYP: usize = #typ;
+
+            fn inner_size(&self) -> usize {
+                0 #(+ self.#field_names.size() )*
+            }
         }
 
         #impls

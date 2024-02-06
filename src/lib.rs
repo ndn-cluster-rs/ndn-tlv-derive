@@ -57,6 +57,9 @@ fn derive_struct(
                     #crate_name::find_tlv::<Self>(bytes)?;
                     let _ = #crate_name::VarNum::decode(bytes)?;
                     let length = #crate_name::VarNum::decode(bytes)?;
+                    if bytes.remaining() < length.value() {
+                        return Err(#crate_name::TlvError::UnexpectedEndOfStream);
+                    }
                     let mut inner_data = bytes.copy_to_bytes(length.value());
 
                     #initialiser

@@ -59,13 +59,8 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             impl #crate_name::TlvDecode for #derivee {
                 fn decode(bytes: &mut #crate_name::bytes::Bytes) -> #crate_name::Result<Self> {
                     use #crate_name::bytes::Buf;
-                    let typ = #crate_name::VarNum::decode(bytes)?;
-                    if typ.value() != Self::TYP {
-                        return Err(#crate_name::TlvError::TypeMismatch {
-                            expected: Self::TYP,
-                            found: typ.value(),
-                        });
-                    }
+                    #crate_name::find_tlv::<Self>(bytes)?;
+                    let _ = #crate_name::VarNum::decode(bytes)?;
                     let length = #crate_name::VarNum::decode(bytes)?;
                     let mut inner_data = bytes.copy_to_bytes(length.value());
 

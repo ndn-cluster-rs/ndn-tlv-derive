@@ -57,10 +57,10 @@ fn derive_struct(
                     #crate_name::find_tlv::<Self>(bytes)?;
                     let _ = #crate_name::VarNum::decode(bytes)?;
                     let length = #crate_name::VarNum::decode(bytes)?;
-                    if bytes.remaining() < length.value() {
+                    if bytes.remaining() < length.into() {
                         return Err(#crate_name::TlvError::UnexpectedEndOfStream);
                     }
-                    let mut inner_data = bytes.copy_to_bytes(length.value());
+                    let mut inner_data = bytes.copy_to_bytes(length.into());
 
                     #initialiser
                 }
@@ -71,8 +71,8 @@ fn derive_struct(
                     use #crate_name::bytes::BufMut;
                     let mut bytes = #crate_name::bytes::BytesMut::with_capacity(self.size());
 
-                    bytes.put(#crate_name::VarNum::new(Self::TYP).encode());
-                    bytes.put(#crate_name::VarNum::new(self.inner_size()).encode());
+                    bytes.put(#crate_name::VarNum::from(Self::TYP).encode());
+                    bytes.put(#crate_name::VarNum::from(self.inner_size()).encode());
                     #(
                         bytes.put(self.#field_names.encode());
                         )*
@@ -81,8 +81,8 @@ fn derive_struct(
                 }
 
                 fn size(&self) -> usize {
-                    #crate_name::VarNum::new(Self::TYP).size()
-                        + #crate_name::VarNum::new(self.inner_size()).size()
+                    #crate_name::VarNum::from(Self::TYP).size()
+                        + #crate_name::VarNum::from(self.inner_size()).size()
                         #(+ self.#field_names.size())*
                 }
             }
@@ -150,7 +150,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                         let mut cur = bytes.clone();
 
                         let typ = #crate_name::VarNum::decode(&mut cur)?;
-                        match typ.value() {
+                        match typ.into() {
                             #(
                             #fields::TYP => Ok(Self::#variants(
                                 #variants::decode(bytes)?,
@@ -158,7 +158,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                             )*
                             _ => Err(#crate_name::TlvError::TypeMismatch {
                                 expected: 0, // TODO
-                                found: typ.value(),
+                                found: typ.into(),
                             }),
                         }
                     }

@@ -54,7 +54,7 @@ fn derive_struct(
             impl #crate_name::TlvDecode for #derivee {
                 fn decode(bytes: &mut #crate_name::bytes::Bytes) -> #crate_name::Result<Self> {
                     use #crate_name::bytes::Buf;
-                    #crate_name::find_tlv::<Self>(bytes)?;
+                    #crate_name::find_tlv::<Self>(bytes, true)?;
                     let _ = #crate_name::VarNum::decode(bytes)?;
                     let length = #crate_name::VarNum::decode(bytes)?;
                     if bytes.remaining() < length.into() {

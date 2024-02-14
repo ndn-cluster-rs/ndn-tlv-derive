@@ -11,6 +11,12 @@ struct TlvAttrKW {
 #[deluxe(attributes(tlv))]
 struct TlvAttr(#[deluxe(default)] usize, #[deluxe(flatten)] TlvAttrKW);
 
+#[derive(deluxe::ExtractAttributes)]
+struct TlvFieldAttr {
+    #[deluxe(default)]
+    default: bool,
+}
+
 fn derive_struct(
     fields: Vec<Field>,
     crate_name: proc_macro2::TokenStream,
@@ -134,15 +140,60 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         Data::Enum(enm) => {
             let mut variants = Vec::with_capacity(enm.variants.len());
             let mut fields = Vec::with_capacity(enm.variants.len());
+            let mut default_variant = None;
 
-            for variant in enm.variants {
-                variants.push(variant.ident);
+            for mut variant in enm.variants {
+                let attrs: TlvFieldAttr = deluxe::extract_attributes(&mut variant).unwrap();
+                if attrs.default {
+                    assert!(default_variant.is_none());
+                    default_variant = Some(variant.ident);
+                } else {
+                    variants.push(variant.ident);
+                }
 
                 if variant.fields.len() != 1 || !matches!(variant.fields, syn::Fields::Unnamed(_)) {
                     panic!("Enum variants must have exactly 1 unnamed field");
                 }
-                fields.push(variant.fields.iter().next().unwrap().ty.clone());
+
+                if !attrs.default {
+                    fields.push(variant.fields.iter().next().unwrap().ty.clone());
+                }
             }
+
+            let decode_default = {
+                if let Some(ref variant) = default_variant {
+                    quote! {
+                        _ => Ok(Self::#variant(#variant::decode(bytes)?)),
+                    }
+                } else {
+                    quote! {
+                        _ => Err(#crate_name::TlvError::TypeMismatch {
+                            expected: 0, // TODO
+                            found: typ.into(),
+                        }),
+                    }
+                }
+            };
+
+            let encode_default_encode = {
+                if let Some(ref variant) = default_variant {
+                    quote! {
+                        Self::#variant(x) => x.encode(),
+                    }
+                } else {
+                    quote! {}
+                }
+            };
+
+            let encode_default_size = {
+                if let Some(ref variant) = default_variant {
+                    quote! {
+                        Self::#variant(x) => x.size(),
+                    }
+                } else {
+                    quote! {}
+                }
+            };
 
             quote! {
                 impl #crate_name::TlvDecode for #derivee {
@@ -156,10 +207,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                 #variants::decode(bytes)?,
                             )),
                             )*
-                            _ => Err(#crate_name::TlvError::TypeMismatch {
-                                expected: 0, // TODO
-                                found: typ.into(),
-                            }),
+                            #decode_default
                         }
                     }
                 }
@@ -169,6 +217,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                         match self {
                             #(
                             Self::#variants(x) => x.encode(),
+                            #encode_default_encode
                             )*
                         }
                     }
@@ -177,6 +226,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                         match self {
                             #(
                                 Self::#variants(x) => x.size(),
+                                #encode_default_size
                             )*
                         }
                     }

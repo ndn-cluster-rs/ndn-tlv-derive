@@ -1,5 +1,5 @@
 use quote::quote;
-use syn::{Data, Field, Fields};
+use syn::{Data, Field, Fields, GenericParam};
 
 #[derive(deluxe::ParseMetaItem)]
 struct TlvAttrKW {
@@ -22,11 +22,38 @@ fn derive_struct(
     crate_name: proc_macro2::TokenStream,
     named: bool,
     derivee: proc_macro2::Ident,
+    generics: syn::Generics,
     typ: usize,
 ) -> proc_macro::TokenStream {
     if typ == 0 {
         panic!("Type must be defined when deriving Tlv for structs");
     }
+
+    let (generic_args, decode_where, encode_where, tlv_where) = {
+        let params: Vec<_> = generics
+            .params
+            .iter()
+            .filter(|x| matches!(x, GenericParam::Type(_)))
+            .collect();
+        if params.len() > 0 {
+            (
+                quote! {
+                    <#( #params ),*>
+                },
+                quote! {
+                    where #(#params: #crate_name::TlvEncode, #params: #crate_name::TlvDecode),*
+                },
+                quote! {
+                    where #(#params: #crate_name::TlvEncode, #params: #crate_name::Tlv),*
+                },
+                quote! {
+                    where #(#params: #crate_name::TlvEncode),*
+                },
+            )
+        } else {
+            (quote! {}, quote! {}, quote! {}, quote! {})
+        }
+    };
 
     let mut field_names = Vec::with_capacity(fields.len());
 
@@ -57,7 +84,7 @@ fn derive_struct(
         };
 
         quote! {
-            impl #crate_name::TlvDecode for #derivee {
+            impl #generic_args #crate_name::TlvDecode for #derivee #generic_args #decode_where {
                 fn decode(bytes: &mut #crate_name::bytes::Bytes) -> #crate_name::Result<Self> {
                     use #crate_name::bytes::Buf;
                     #crate_name::find_tlv::<Self>(bytes, true)?;
@@ -72,7 +99,7 @@ fn derive_struct(
                 }
             }
 
-            impl #crate_name::TlvEncode for #derivee {
+            impl #generic_args #crate_name::TlvEncode for #derivee #generic_args #encode_where {
                 fn encode(&self) -> #crate_name::bytes::Bytes {
                     use #crate_name::bytes::BufMut;
                     let mut bytes = #crate_name::bytes::BytesMut::with_capacity(self.size());
@@ -96,7 +123,7 @@ fn derive_struct(
     };
 
     quote! {
-        impl #crate_name::Tlv for #derivee {
+        impl #generic_args #crate_name::Tlv for #derivee #generic_args #tlv_where {
             const TYP: usize = #typ;
 
             fn inner_size(&self) -> usize {
@@ -125,16 +152,18 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     match input.data {
         Data::Union(_) => panic!("Deriving Tlv on Unions is not supported"),
         Data::Struct(struct_data) => match struct_data.fields {
-            Fields::Unit => derive_struct(Vec::new(), crate_name, true, derivee, typ),
+            Fields::Unit => {
+                derive_struct(Vec::new(), crate_name, true, derivee, input.generics, typ)
+            }
             Fields::Unnamed(unnamed_fields) => {
                 let mut fields = Vec::with_capacity(unnamed_fields.unnamed.len());
                 fields.extend(unnamed_fields.unnamed);
-                derive_struct(fields, crate_name, false, derivee, typ)
+                derive_struct(fields, crate_name, false, derivee, input.generics, typ)
             }
             Fields::Named(named_fields) => {
                 let mut fields = Vec::with_capacity(named_fields.named.len());
                 fields.extend(named_fields.named);
-                derive_struct(fields, crate_name, true, derivee, typ)
+                derive_struct(fields, crate_name, true, derivee, input.generics, typ)
             }
         },
         Data::Enum(enm) => {

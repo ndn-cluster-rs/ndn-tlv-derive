@@ -44,7 +44,7 @@ fn derive_struct(
                     where #(#params: #crate_name::TlvEncode, #params: #crate_name::TlvDecode),*
                 },
                 quote! {
-                    where #(#params: #crate_name::TlvEncode, #params: #crate_name::Tlv),*
+                    where #(#params: #crate_name::TlvEncode),*
                 },
                 quote! {
                     where #(#params: #crate_name::TlvEncode),*

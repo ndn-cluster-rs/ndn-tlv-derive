@@ -25,10 +25,6 @@ fn derive_struct(
     generics: syn::Generics,
     typ: usize,
 ) -> proc_macro::TokenStream {
-    if typ == 0 {
-        panic!("Type must be defined when deriving Tlv for structs");
-    }
-
     let (generic_args, decode_where, encode_where, tlv_where) = {
         let params: Vec<_> = generics
             .params
@@ -83,53 +79,96 @@ fn derive_struct(
             }
         };
 
-        quote! {
-            impl #generic_args #crate_name::TlvDecode for #derivee #generic_args #decode_where {
-                fn decode(bytes: &mut #crate_name::bytes::Bytes) -> #crate_name::Result<Self> {
-                    use #crate_name::bytes::Buf;
-                    #crate_name::find_tlv::<Self>(bytes, true)?;
-                    let _ = #crate_name::VarNum::decode(bytes)?;
-                    let length = #crate_name::VarNum::decode(bytes)?;
-                    if bytes.remaining() < length.into() {
-                        return Err(#crate_name::TlvError::UnexpectedEndOfStream);
+        let decode_impl = if typ == 0 {
+            quote! {
+                impl #generic_args #crate_name::TlvDecode for #derivee #generic_args #decode_where {
+                    fn decode(bytes: &mut #crate_name::bytes::Bytes) -> #crate_name::Result<Self> {
+                        let mut inner_data = bytes;
+                        #initialiser
                     }
-                    let mut inner_data = bytes.copy_to_bytes(length.into());
-
-                    #initialiser
                 }
             }
+        } else {
+            quote! {
+                impl #generic_args #crate_name::TlvDecode for #derivee #generic_args #decode_where {
+                    fn decode(bytes: &mut #crate_name::bytes::Bytes) -> #crate_name::Result<Self> {
+                        use #crate_name::bytes::Buf;
+                        #crate_name::find_tlv::<Self>(bytes, true)?;
+                        let _ = #crate_name::VarNum::decode(bytes)?;
+                        let length = #crate_name::VarNum::decode(bytes)?;
+                        if bytes.remaining() < length.into() {
+                            return Err(#crate_name::TlvError::UnexpectedEndOfStream);
+                        }
+                        let mut inner_data = bytes.copy_to_bytes(length.into());
 
-            impl #generic_args #crate_name::TlvEncode for #derivee #generic_args #encode_where {
-                fn encode(&self) -> #crate_name::bytes::Bytes {
-                    use #crate_name::bytes::BufMut;
-                    let mut bytes = #crate_name::bytes::BytesMut::with_capacity(self.size());
+                        #initialiser
+                    }
+                }
+            }
+        };
 
+        let encode_impl = {
+            let encode_header = if typ == 0 {
+                quote! {}
+            } else {
+                quote! {
                     bytes.put(#crate_name::VarNum::from(Self::TYP).encode());
                     bytes.put(#crate_name::VarNum::from(self.inner_size()).encode());
-                    #(
-                        bytes.put(self.#field_names.encode());
-                        )*
-
-                    bytes.freeze()
                 }
+            };
 
-                fn size(&self) -> usize {
+            let size_header = if typ == 0 {
+                quote! {0}
+            } else {
+                quote! {
                     #crate_name::VarNum::from(Self::TYP).size()
                         + #crate_name::VarNum::from(self.inner_size()).size()
-                        #(+ self.#field_names.size())*
+                }
+            };
+            quote! {
+                impl #generic_args #crate_name::TlvEncode for #derivee #generic_args #encode_where {
+                    fn encode(&self) -> #crate_name::bytes::Bytes {
+                        use #crate_name::bytes::BufMut;
+                        let mut bytes = #crate_name::bytes::BytesMut::with_capacity(self.size());
+
+                        #encode_header
+                        #(
+                            bytes.put(self.#field_names.encode());
+                            )*
+
+                        bytes.freeze()
+                    }
+
+                    fn size(&self) -> usize {
+                        #size_header
+                            #(+ self.#field_names.size())*
+                    }
                 }
             }
+        };
+
+        quote! {
+            #decode_impl
+            #encode_impl
         }
     };
 
-    quote! {
-        impl #generic_args #crate_name::Tlv for #derivee #generic_args #tlv_where {
-            const TYP: usize = #typ;
+    let tlv_impl = if typ != 0 {
+        quote! {
+            impl #generic_args #crate_name::Tlv for #derivee #generic_args #tlv_where {
+                const TYP: usize = #typ;
 
-            fn inner_size(&self) -> usize {
-                0 #(+ self.#field_names.size() )*
+                fn inner_size(&self) -> usize {
+                    0 #(+ self.#field_names.size() )*
+                }
             }
         }
+    } else {
+        quote! {}
+    };
+
+    quote! {
+        #tlv_impl
 
         #impls
     }

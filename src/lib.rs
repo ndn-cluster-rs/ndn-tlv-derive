@@ -271,8 +271,8 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                         let typ = #crate_name::VarNum::decode(&mut cur)?;
                         match typ.into() {
                             #(
-                            #fields::TYP => Ok(Self::#variants(
-                                #variants::decode(bytes)?,
+                            <#fields>::TYP => Ok(Self::#variants(
+                                <#fields>::decode(bytes)?,
                             )),
                             )*
                             #decode_default

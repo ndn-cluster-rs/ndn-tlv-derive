@@ -159,7 +159,7 @@ fn derive_struct(
                 const TYP: usize = #typ;
 
                 fn inner_size(&self) -> usize {
-                    0 #(+ self.#field_names.size() )*
+                    0 #(+ #crate_name::TlvEncode::size(&self.#field_names) )*
                 }
             }
         }

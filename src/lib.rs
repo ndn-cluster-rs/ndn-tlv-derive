@@ -99,7 +99,7 @@ fn derive_struct(
                         if bytes.remaining() < length.into() {
                             return Err(#crate_name::TlvError::UnexpectedEndOfStream);
                         }
-                        let mut inner_data = bytes.copy_to_bytes(length.into());
+                        let mut inner_data = bytes.split_to(length.into());
 
                         #initialiser
                     }

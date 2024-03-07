@@ -206,6 +206,9 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             }
         },
         Data::Enum(enm) => {
+            if typ != 0 {
+                panic!("Enums cannot have a TLV Type");
+            }
             let mut variants = Vec::with_capacity(enm.variants.len());
             let mut fields = Vec::with_capacity(enm.variants.len());
             let mut default_variant = None;

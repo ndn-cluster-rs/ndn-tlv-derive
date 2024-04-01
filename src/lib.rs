@@ -29,7 +29,16 @@ fn derive_struct(
         let params: Vec<_> = generics
             .params
             .iter()
-            .filter(|x| matches!(x, GenericParam::Type(_)))
+            .filter_map(|x| {
+                if let GenericParam::Type(typ) = x {
+                    let mut typ = typ.clone();
+                    typ.eq_token = None;
+                    typ.default = None;
+                    Some(GenericParam::Type(typ))
+                } else {
+                    None
+                }
+            })
             .collect();
         if params.len() > 0 {
             (

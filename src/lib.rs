@@ -17,6 +17,49 @@ struct TlvFieldAttr {
     default: bool,
 }
 
+fn decode_generics(
+    crate_name: &proc_macro2::TokenStream,
+    generics: syn::Generics,
+) -> (
+    proc_macro2::TokenStream,
+    proc_macro2::TokenStream,
+    proc_macro2::TokenStream,
+    proc_macro2::TokenStream,
+) {
+    let params: Vec<_> = generics
+        .params
+        .iter()
+        .filter_map(|x| {
+            if let GenericParam::Type(typ) = x {
+                let mut typ = typ.clone();
+                typ.eq_token = None;
+                typ.default = None;
+                Some(GenericParam::Type(typ))
+            } else {
+                None
+            }
+        })
+        .collect();
+    if params.len() > 0 {
+        (
+            quote! {
+                <#( #params ),*>
+            },
+            quote! {
+                where #(#params: #crate_name::TlvEncode, #params: #crate_name::TlvDecode),*
+            },
+            quote! {
+                where #(#params: #crate_name::TlvEncode),*
+            },
+            quote! {
+                where #(#params: #crate_name::TlvEncode),*
+            },
+        )
+    } else {
+        (quote! {}, quote! {}, quote! {}, quote! {})
+    }
+}
+
 fn derive_struct(
     fields: Vec<Field>,
     crate_name: proc_macro2::TokenStream,
@@ -25,40 +68,8 @@ fn derive_struct(
     generics: syn::Generics,
     typ: usize,
 ) -> proc_macro::TokenStream {
-    let (generic_args, decode_where, encode_where, tlv_where) = {
-        let params: Vec<_> = generics
-            .params
-            .iter()
-            .filter_map(|x| {
-                if let GenericParam::Type(typ) = x {
-                    let mut typ = typ.clone();
-                    typ.eq_token = None;
-                    typ.default = None;
-                    Some(GenericParam::Type(typ))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        if params.len() > 0 {
-            (
-                quote! {
-                    <#( #params ),*>
-                },
-                quote! {
-                    where #(#params: #crate_name::TlvEncode, #params: #crate_name::TlvDecode),*
-                },
-                quote! {
-                    where #(#params: #crate_name::TlvEncode),*
-                },
-                quote! {
-                    where #(#params: #crate_name::TlvEncode),*
-                },
-            )
-        } else {
-            (quote! {}, quote! {}, quote! {}, quote! {})
-        }
-    };
+    let (generic_args, decode_where, encode_where, tlv_where) =
+        decode_generics(&crate_name, generics);
 
     let mut field_names = Vec::with_capacity(fields.len());
 
@@ -222,6 +233,9 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             let mut fields = Vec::with_capacity(enm.variants.len());
             let mut default_variant = None;
 
+            let (generic_args, decode_where, encode_where, tlv_where) =
+                decode_generics(&crate_name, input.generics);
+
             for mut variant in enm.variants {
                 let attrs: TlvFieldAttr = deluxe::extract_attributes(&mut variant).unwrap();
                 if attrs.default {
@@ -276,7 +290,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             };
 
             quote! {
-                impl #crate_name::TlvDecode for #derivee {
+                impl #generic_args #crate_name::TlvDecode for #derivee #generic_args #decode_where {
                     fn decode(bytes: &mut #crate_name::bytes::Bytes) -> #crate_name::Result<Self> {
                         let mut cur = bytes.clone();
 
@@ -292,7 +306,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     }
                 }
 
-                impl #crate_name::TlvEncode for #derivee {
+                impl #generic_args #crate_name::TlvEncode for #derivee #generic_args #encode_where {
                     fn encode(&self) -> #crate_name::bytes::Bytes {
                         match self {
                             #(

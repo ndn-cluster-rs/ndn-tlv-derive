@@ -233,7 +233,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             let mut fields = Vec::with_capacity(enm.variants.len());
             let mut default_variant = None;
 
-            let (generic_args, decode_where, encode_where, tlv_where) =
+            let (generic_args, decode_where, encode_where, _tlv_where) =
                 decode_generics(&crate_name, input.generics);
 
             for mut variant in enm.variants {

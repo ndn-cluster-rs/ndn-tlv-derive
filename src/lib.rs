@@ -1,3 +1,13 @@
+//! The `Tlv` derive macro used by [`ndn-tlv`](https://crates.io/crates/ndn-tlv)
+//! to implement its `TlvEncode`, `TlvDecode`, and `Tlv` traits for structs
+//! and enums.
+//!
+//! This crate isn't meant to be used on its own -- `ndn-tlv` re-exports the
+//! macro as `ndn_tlv::Tlv`, so depend on `ndn-tlv` and derive from there.
+//! See that crate's documentation for how the macro is used day to day.
+//! It only lives in its own crate because Rust requires derive macros to
+//! be defined in a dedicated `proc-macro` crate.
+
 use quote::quote;
 use syn::{Data, Field, Fields, GenericParam};
 
@@ -195,6 +205,56 @@ fn derive_struct(
     .into()
 }
 
+/// Implements `Tlv`, `TlvEncode`, and `TlvDecode` for a struct or enum.
+///
+/// # Structs
+///
+/// A struct can carry a `#[tlv(TYPE)]` attribute giving its TLV type
+/// number. Fields are encoded and decoded in the order they're declared,
+/// each using its own `TlvEncode`/`TlvDecode` implementation, so field
+/// order must match the wire format.
+///
+/// ```ignore
+/// #[derive(Tlv)]
+/// #[tlv(8)]
+/// struct GenericNameComponent {
+///     name: Bytes,
+/// }
+/// ```
+///
+/// Omitting the attribute (or writing `#[tlv(0)]`) gives the struct no
+/// type/length header of its own -- its fields are just encoded and
+/// decoded back to back. This is useful for grouping fields that don't
+/// form a TLV record on their own, e.g. two records meant to appear one
+/// after another. In this case only `TlvEncode` and `TlvDecode` are
+/// implemented, since there's no type number for `Tlv::TYPE` to report.
+///
+/// # Enums
+///
+/// An enum doesn't take a `#[tlv(TYPE)]` attribute. Each variant must
+/// wrap exactly one field whose type implements `Tlv`. Decoding peeks at
+/// the next TLV's type number and tries each variant in declaration
+/// order until one whose wrapped type's `TYPE` matches; encoding just
+/// delegates to whichever variant is present.
+///
+/// ```ignore
+/// #[derive(Tlv)]
+/// enum NameComponent {
+///     GenericNameComponent(GenericNameComponent),
+///     ImplicitSha256DigestComponent(ImplicitSha256DigestComponent),
+/// }
+/// ```
+///
+/// One variant may be marked `#[tlv(default)]` to act as a fallback for
+/// any type number that doesn't match another variant, instead of
+/// failing to decode.
+///
+/// # The `internal` flag
+///
+/// `#[tlv(TYPE, internal = true)]` makes the generated code refer to
+/// `crate::` instead of `::ndn_tlv`. It exists only so `ndn-tlv` can
+/// derive `Tlv` on types in its own test suite, where depending on
+/// itself isn't possible. Downstream users should never need it.
 #[proc_macro_derive(Tlv, attributes(tlv))]
 pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let mut input = syn::parse2::<syn::DeriveInput>(input.into()).unwrap();

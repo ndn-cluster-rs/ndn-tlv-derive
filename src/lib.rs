@@ -22,6 +22,7 @@ struct TlvAttrKW {
 struct TlvAttr(#[deluxe(default)] usize, #[deluxe(flatten)] TlvAttrKW);
 
 #[derive(deluxe::ExtractAttributes)]
+#[deluxe(attributes(tlv))]
 struct TlvFieldAttr {
     #[deluxe(default)]
     default: bool,
